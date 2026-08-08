@@ -27,10 +27,9 @@
 > This guide covers **planned, voluntary credential rotation** on a server you believe is
 > healthy.
 >
-> **If you have reason to think your server was actually accessed, securing funds comes
-> first.** Move funds to a wallet whose keys have never touched the server, then patch,
-> then investigate, then rotate. Credential rotation is the last step in incident response,
-> not the first.
+> **If you have reason to believe the server was actually compromised, stop here.** Take the
+> affected server offline and follow current BTCPay Server security and incident-response
+> guidance. **Do not rely on macaroon rotation alone.**
 
 This guide walks you through rotating the LND macaroon credentials on a BTCPay Server
 running on LunaNode.
@@ -346,15 +345,19 @@ If your login username is not `ubuntu`, substitute your actual username and home
 On your own computer, open a **second Terminal window** and run:
 
 ```bash
-scp ubuntu@YOUR_SERVER_IP:/home/ubuntu/channel.backup ~/channel.backup
+scp ubuntu@YOUR_SERVER_IP:/home/ubuntu/channel.backup \
+  ~/channel.backup-$(date +%F-%H%M%S)
 ```
 
 *(On older Windows using PuTTY, use PSCP or WinSCP instead.)*
 
+> The timestamped filename prevents overwriting an SCB you saved previously. Never replace
+> an existing recovery artifact with a new one — keep both.
+
 Verify the file exists locally and the size matches the server copy:
 
 ```bash
-ls -lh ~/channel.backup
+ls -lh ~/channel.backup-*
 ```
 
 Return to your server terminal and remove the temporary copy:
@@ -790,39 +793,26 @@ VPS snapshot.**
 ### A wallet app still will not connect, but RTL works
 
 RTL connects over the internal Docker network; mobile wallets connect across the internet.
-These are different paths, so a mobile failure alongside a working RTL points at the
-external route rather than the credential.
+These are different paths.
 
-**Determine which, before changing anything.** Copy the LND-REST URL exactly as BTCPay
-displays it on the service page — do not guess or reconstruct the path — and query it
-directly:
+**If `lncli getinfo` and RTL both work, the regenerated admin macaroon is working locally.**
+The rotation succeeded. Generate a fresh connection from BTCPay and troubleshoot the
+external endpoint, TLS, reverse proxy, or wallet configuration.
 
-```bash
-docker exec btcpayserver_lnd_bitcoin cat /data/admin.macaroon > /tmp/admin.macaroon
-MAC=$(od -An -tx1 /tmp/admin.macaroon | tr -d ' \n')
+**Do not repeat the macaroon rotation.** It will not fix an external routing or endpoint
+problem, and each rotation invalidates every credential again.
 
-curl -s -o /dev/null -w "HTTP %{http_code}\n" \
-  -H "Grpc-Metadata-macaroon: $MAC" \
-  "https://YOUR-BTCPAY-DOMAIN/lnd-rest/btc/v1/getinfo"
+Useful checks that require no credential handling:
 
-rm /tmp/admin.macaroon; unset MAC
-```
+- Load your BTCPay domain in the device's browser over cellular data, WiFi off — confirms
+  the server is reachable from outside your network
+- Compare the URL the wallet is using against exactly what BTCPay's service page displays.
+  Do not reconstruct or guess the path.
+- Try LND-gRPC instead of LND-REST, or vice versa
 
-The status code alone tells you where the problem is:
-
-| Code | Meaning |
-|---|---|
-| **200** | Endpoint and credential both work. The problem is inside the wallet app's configuration. |
-| **401** | Endpoint reachable, macaroon rejected. This is a genuine credential problem. |
-| **404** | BTCPay is not routing to LND. **Not a credential problem** — a macaroon is never evaluated. |
-| **timeout / refused** | The endpoint is not reachable at all |
-
-> **A macaroon problem produces 401, never 404.** If you see 404, the request never reached
-> LND, and the same result would occur with your old macaroon. Do not repeat the rotation —
-> investigate BTCPay's external service routing instead.
-
-Also confirm the endpoint is reachable from the device itself: load your BTCPay domain in
-the phone's browser over cellular data with WiFi off.
+> Avoid copying macaroons out of the container for ad-hoc testing. Writing them to
+> temporary files or passing them on a command line exposes a full admin credential through
+> file permissions, shell history, and the process list.
 
 ---
 
