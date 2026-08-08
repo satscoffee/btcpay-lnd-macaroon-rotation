@@ -5,76 +5,88 @@
 > **If you are here because of the August 2026 BTCPay Server advisory, update to 2.4.2
 > before doing anything else.**
 >
-> Rotating macaroons does **not** remediate an unpatched vulnerability. If an attacker
-> retains access, they may be able to obtain newly generated credentials again.
+> **Mechanism**, per the
+> [official advisory](https://blog.btcpayserver.org/security-advisory-btcpay-server-2-4-2/):
+> an unauthenticated remote attacker could obtain LND `.macaroon` credential files. Those
+> credentials control the LND node and can move its funds. **Exploitation is confirmed and
+> funds were stolen.**
 >
-> **Correct order:**
+> **Who is affected:** LND users on any version before final 2.4.2, **including 2.4.2
+> release candidates**. Other Lightning implementations and non-Lightning deployments are
+> not exposed to this credential risk. **BTCPay's own on-chain wallets, including hot
+> wallets, are not affected** — earlier advice to move those funds was withdrawn. **LND's
+> on-chain wallet is part of the affected node.**
 >
-> 1. **Update to BTCPay Server 2.4.2 or later**, or take the server offline until you can
-> 2. **Check for unauthorized access** — unfamiliar user accounts, unrecognized API keys,
->    changed 2FA settings, attacker-configured payout or pull-payment destinations,
->    unexpected wallet transactions
-> 3. **Only then** rotate credentials using this guide
+> **Order of operations:**
 >
-> **Also update NBXplorer to 2.6.10.** The official release notes recommend this alongside
-> the BTCPay update. Don't stop at BTCPay itself.
+> 1. **Update BTCPay Server using the official update process** (Server Settings →
+>    Maintenance → Update, or your usual method). If you cannot update, take the server
+>    offline.
 >
-> If you run Core Lightning or another Lightning backend, refresh its authentication
-> strings too — this guide covers LND only.
+>    The advisory's stated success criteria are **BTCPay 2.4.2** in the footer **and LND
+>    0.21.1**. The standard update handles the LND upgrade; on a BTCPay Docker instance
+>    `getinfo` reports it as `0.21.1-beta`. **Do not manually substitute an LND Docker image
+>    to reach that version** — follow the official update path and verify the result.
+> 2. **Review LND for unauthorized activity** — payments you did not make, unexpected
+>    channel closures, unfamiliar peers, and on-chain and channel balances against your own
+>    records.
+> 3. **Rotate credentials.** The update auto-regenerates macaroons. This guide is the manual
+>    path and gives you cryptographic proof the rotation actually happened.
 >
-> Verify your version in the BTCPay footer, or:
+> **Check whether the update already rotated them:**
+>
+> ```bash
+> docker exec btcpayserver_lnd_bitcoin ls -la /data/
+> ```
+>
+> Observed on a patched instance: a zero-byte marker file
+> `.macaroon-rotated-lnd-security-2026-08-v1` alongside `.macaroon` files whose timestamps
+> match the update. If the marker is present and the macaroon mtimes are post-update, the
+> official rotation ran and **you do not need to repeat it manually.**
+>
+> If you rotated *before* patching, those credentials were generated on a vulnerable server
+> — confirm they were replaced afterward, or rotate again.
+>
+> Rotating before patching does not help: an attacker able to read `.macaroon` files can
+> read the new ones too.
+>
+> **If you expose LND outside BTCPay** — your own reverse proxy, Tor service, or forwarded
+> port — **rotate those credentials now.** Updating BTCPay does not close access paths you
+> manage yourself.
+>
+> **On the standard BTCPay Docker configuration updated for this incident, Zeus and other
+> external wallets will not connect through BTCPay's previously exposed public LND
+> endpoints.** Those routes were removed temporarily while the incident is ongoing. A failed
+> mobile connection is expected, not a failed rotation.
+>
+> Also update **NBXplorer to 2.6.10** (per the release notes).
 >
 > ```bash
 > sudo docker inspect generated_btcpayserver_1 --format='{{.Config.Image}}'
+> cd ~/btcpayserver-docker && ./bitcoin-lncli.sh getinfo | head -3
 > ```
 >
-> ### What the vulnerability was
+> **Sources:**
+> [security advisory](https://blog.btcpayserver.org/security-advisory-btcpay-server-2-4-2/) ·
+> [v2.4.2 release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.2) ·
+> [BTCPay chat](https://chat.btcpayserver.org/)
 >
-> Per the [official v2.4.2 release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.2):
+> Disclosed by Craig Raw; exploit analysis by Team Red. The same release separately fixes a
+> TOTP bypass via Greenfield Basic auth (#7491) and disables Basic auth by default (#7492) —
+> related hardening, not the credential-theft path.
 >
-> > *"This release contains fix of a critical vulnerability that is being actively
-> > exploited. You need to update as fast as you can."*
->
-> The security fix listed is **"Fix TOTP two-factor authentication bypass via Greenfield
-> Basic authentication."** Reported by `@brunoerg` and `@benthecarman` of the Bitcoin Red
-> Team.
->
-> **This tells you what to check for.** The attack path was authentication bypass against
-> the Greenfield API — so prioritize looking for unauthorized account and API activity, not
-> just wallet transactions.
->
-> **Note the breaking change:** 2.4.2 disables Greenfield Basic authentication by default
-> five minutes after account creation. If an integration of yours relied on Basic auth, it
-> will stop working — API key authentication is the supported path.
->
-> ### Verify this yourself
->
-> **Do not take any version number in this guide on faith.** Advisories change and this
-> document is a snapshot. Check current guidance before acting:
->
-> - [v2.4.2 release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.2) — primary source
-> - [BTCPay Server releases](https://github.com/btcpayserver/btcpayserver/releases)
-> - [BTCPay Server on X](https://x.com/BtcpayServer)
-> - [BTCPay Server chat](https://chat.btcpayserver.org/)
->
-> Independent coverage:
-> [The Block](https://www.theblock.co/news/ecosystems/2026-08-07-btcpay-warns-actively-exploited-vulnerability-could-drain-funds-411170) ·
-> [Decrypt](https://decrypt.co/375159/bitcoin-payment-service-btcpay-critical-flaw-active-attack) ·
-> [crypto.news](https://crypto.news/btcpay-server-warns-active-exploit-may-drain-funds/)
->
-> *Note: the v2.4.2 release notes do not themselves mention macaroon rotation. Guidance to
-> replace macaroons and recreate `macaroons.db` comes from BTCPay's advisory communications
-> as relayed in press coverage. Rotation is sound practice after a suspected credential
-> exposure regardless — but patch first.*
+> **Advisories change. Verify current guidance before acting.**
 
-> ### Scope: this is maintenance, not incident response
+> ### Scope
 >
-> This guide covers **planned, voluntary credential rotation** on a server you believe is
-> healthy.
+> This is a **credential rotation procedure**. It is one control among several, not an
+> incident-response playbook.
 >
-> **If you have reason to believe the server was actually compromised, stop here.** Take the
-> affected server offline and follow current BTCPay Server security and incident-response
-> guidance. **Do not rely on macaroon rotation alone.**
+> If you ran a vulnerable version, the advisory says to treat LND credentials as
+> potentially exposed — so rotation applies to you even if the server looks fine.
+>
+> **If you believe funds were taken or the host itself was compromised, stop here.** Take
+> the server offline and follow current official guidance. Rotation does not undo theft.
 
 This guide walks you through rotating the LND macaroon credentials on a BTCPay Server
 running on LunaNode.
@@ -106,7 +118,8 @@ This guide was tested on:
 - LunaNode Ubuntu VPS
 - BTCPay Server installed with `btcpayserver-docker`
 - Bitcoin mainnet
-- LND `v0.21.0-beta`
+- LND `v0.21.0-beta` (the procedure was validated pre-advisory; patched instances report
+  `v0.21.1-beta`, and the steps are unchanged)
 - LND container `btcpayserver_lnd_bitcoin`
 - standard Bolt database backend
 
@@ -238,7 +251,8 @@ cd ~/btcpayserver-docker
 ./bitcoin-lncli.sh getinfo | head -6
 ```
 
-This guide was tested on LND `v0.21.0-beta`.
+This guide was tested on LND `v0.21.0-beta`. Instances patched for the August 2026 advisory
+report `v0.21.1-beta`; the procedure is the same.
 
 Inspect the configured macaroon paths and database backend:
 
@@ -662,7 +676,7 @@ To determine what kind of close occurred, read **`chan_status_flags`**:
 
 | Flag | Meaning |
 |---|---|
-| `ChanStatusCoopBroadcasted` | Cooperative close — both sides agreed. Normal, funds settle at current balances. |
+| `ChanStatusCoopBroadcasted` | Cooperative close transaction broadcast — both sides agreed to the close. Funds settle on-chain according to the negotiated closing transaction. |
 | `ChanStatusRemoteCloseInitiator` | The **remote peer** initiated the close |
 | `ChanStatusLocalCloseInitiator` | **Your node** initiated the close |
 | `ChanStatusCommitBroadcasted` | A commitment transaction was broadcast — associated with force closes |
@@ -723,17 +737,23 @@ Step 12, not any single application connecting.)
 
 ### Zeus, Zap, and other remote wallets
 
-Generate a fresh connection from **Server Settings → Services → LND-gRPC** or
-**LND-REST**, then scan the new QR code.
+> ⚠️ **On BTCPay 2.4.2, remote wallets cannot connect through your BTCPay domain or Tor
+> onion address.** Public LND API access on Docker deployments was temporarily removed as
+> an incident-response measure. This is intentional and expected to be restored later.
+>
+> **A failed Zeus connection on 2.4.2 is not evidence of a failed rotation.** Do not rotate
+> again to try to fix it.
 
-If the new connection does not work:
+Where remote access is available, generate a fresh connection from **Server Settings →
+Services → LND-gRPC** or **LND-REST** and scan the new QR code.
 
-1. Generate a fresh LND-gRPC or LND-REST connection in BTCPay. Do not reuse an old QR
-   screenshot.
-2. If the wallet app supports replacing the existing connection, update it. If that fails,
-   delete the old node entry and add the fresh connection as a new node.
-3. If RTL and `lncli getinfo` both work but the mobile wallet does not, troubleshoot the
-   external connection path rather than repeating the macaroon rotation.
+If it does not work:
+
+1. Generate a fresh connection in BTCPay. Do not reuse an old QR screenshot.
+2. Replace the existing connection in the wallet app if it supports that; otherwise delete
+   the node entry and add it as a new node.
+3. If RTL and `lncli getinfo` both work, the rotation succeeded. Troubleshoot the external
+   connection path — do not repeat the rotation.
 
 ### Custom API integrations
 
@@ -853,8 +873,13 @@ RTL connects over the internal Docker network; mobile wallets connect across the
 These are different paths.
 
 **If `lncli getinfo` and RTL both work, the regenerated admin macaroon is working locally.**
-The rotation succeeded. Generate a fresh connection from BTCPay and troubleshoot the
-external endpoint, TLS, reverse proxy, or wallet configuration.
+The rotation succeeded.
+
+**On BTCPay 2.4.2 this is expected** — public LND API access on Docker was temporarily
+removed, so remote wallets cannot connect through your domain or onion address by design.
+
+On other versions, generate a fresh connection from BTCPay and troubleshoot the external
+endpoint, TLS, reverse proxy, or wallet configuration.
 
 **Do not repeat the macaroon rotation.** It will not fix an external routing or endpoint
 problem, and each rotation invalidates every credential again.
@@ -923,7 +948,8 @@ adds:
 - end-to-end payment verification
 
 Tested on a LunaNode BTCPay Server Docker deployment running Bitcoin mainnet and LND
-`v0.21.0-beta`.
+`v0.21.0-beta`, then re-verified on the same instance after updating to BTCPay 2.4.2 and
+LND `v0.21.1-beta`.
 
 **If your version, database backend, macaroon paths, or filesystem layout differ from the
 checks in this guide, stop rather than adapting the deletion commands blindly.**
