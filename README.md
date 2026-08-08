@@ -5,22 +5,67 @@
 > **If you are here because of the August 2026 BTCPay Server advisory, update to 2.4.2
 > before doing anything else.**
 >
-> Rotating macaroons does **not** patch a vulnerable server. Correct order:
+> Rotating macaroons does **not** remediate an unpatched vulnerability. If an attacker
+> retains access, they may be able to obtain newly generated credentials again.
+>
+> **Correct order:**
 >
 > 1. **Update to BTCPay Server 2.4.2 or later**, or take the server offline until you can
-> 2. **Check for unauthorized access** — new users, unfamiliar API keys, attacker-configured
->    payout or pull-payment destinations, unexpected wallet transactions
+> 2. **Check for unauthorized access** — unfamiliar user accounts, unrecognized API keys,
+>    changed 2FA settings, attacker-configured payout or pull-payment destinations,
+>    unexpected wallet transactions
 > 3. **Only then** rotate credentials using this guide
 >
-> **Rotating macaroons on an unpatched server accomplishes nothing.** An attacker who still
-> has access simply obtains the new credentials. Doing this first creates a false sense of
-> security, which is worse than doing nothing.
+> **Also update NBXplorer to 2.6.10.** The official release notes recommend this alongside
+> the BTCPay update. Don't stop at BTCPay itself.
+>
+> If you run Core Lightning or another Lightning backend, refresh its authentication
+> strings too — this guide covers LND only.
 >
 > Verify your version in the BTCPay footer, or:
 >
 > ```bash
 > sudo docker inspect generated_btcpayserver_1 --format='{{.Config.Image}}'
 > ```
+>
+> ### What the vulnerability was
+>
+> Per the [official v2.4.2 release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.2):
+>
+> > *"This release contains fix of a critical vulnerability that is being actively
+> > exploited. You need to update as fast as you can."*
+>
+> The security fix listed is **"Fix TOTP two-factor authentication bypass via Greenfield
+> Basic authentication."** Reported by `@brunoerg` and `@benthecarman` of the Bitcoin Red
+> Team.
+>
+> **This tells you what to check for.** The attack path was authentication bypass against
+> the Greenfield API — so prioritize looking for unauthorized account and API activity, not
+> just wallet transactions.
+>
+> **Note the breaking change:** 2.4.2 disables Greenfield Basic authentication by default
+> five minutes after account creation. If an integration of yours relied on Basic auth, it
+> will stop working — API key authentication is the supported path.
+>
+> ### Verify this yourself
+>
+> **Do not take any version number in this guide on faith.** Advisories change and this
+> document is a snapshot. Check current guidance before acting:
+>
+> - [v2.4.2 release notes](https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.2) — primary source
+> - [BTCPay Server releases](https://github.com/btcpayserver/btcpayserver/releases)
+> - [BTCPay Server on X](https://x.com/BtcpayServer)
+> - [BTCPay Server chat](https://chat.btcpayserver.org/)
+>
+> Independent coverage:
+> [The Block](https://www.theblock.co/news/ecosystems/2026-08-07-btcpay-warns-actively-exploited-vulnerability-could-drain-funds-411170) ·
+> [Decrypt](https://decrypt.co/375159/bitcoin-payment-service-btcpay-critical-flaw-active-attack) ·
+> [crypto.news](https://crypto.news/btcpay-server-warns-active-exploit-may-drain-funds/)
+>
+> *Note: the v2.4.2 release notes do not themselves mention macaroon rotation. Guidance to
+> replace macaroons and recreate `macaroons.db` comes from BTCPay's advisory communications
+> as relayed in press coverage. Rotation is sound practice after a suspected credential
+> exposure regardless — but patch first.*
 
 > ### Scope: this is maintenance, not incident response
 >
@@ -351,8 +396,12 @@ scp ubuntu@YOUR_SERVER_IP:/home/ubuntu/channel.backup \
 
 *(On older Windows using PuTTY, use PSCP or WinSCP instead.)*
 
-> The timestamped filename prevents overwriting an SCB you saved previously. Never replace
-> an existing recovery artifact with a new one — keep both.
+> The timestamped filename prevents overwriting an SCB you saved previously.
+>
+> **Keep the previous copy until you have verified the new one.** Then clearly identify the
+> newest SCB as your current backup — `channel.backup` changes as channels open and close,
+> and **older SCBs may not include newer channels.** Your off-node copy should be kept
+> current.
 
 Verify the file exists locally and the size matches the server copy:
 
@@ -625,7 +674,8 @@ Multiple flags appear together separated by `|`. For example:
 "chan_status_flags": "ChanStatusCoopBroadcasted|ChanStatusRemoteCloseInitiator"
 ```
 
-means a cooperative close that the remote peer initiated — a normal, benign event.
+means a cooperative close initiated by the remote peer. This is a normal close type, though
+an unexpected close is still worth investigating.
 
 The macaroon commands in this guide do not issue a channel-close RPC, but any unexpected
 channel-state change should still be investigated before declaring the maintenance
@@ -649,12 +699,19 @@ Check **Store → Settings → Lightning** and confirm the connection works.
 
 ### RTL
 
+**If you do not use RTL, skip this subsection.**
+
 ```bash
 docker restart "$RTL"
 ```
 
-If `$RTL` is unset, find it with
-`docker ps --format '{{.Names}}' | grep -i rtl`. Wait briefly, then reload RTL.
+If `$RTL` is empty or unset, do not run that command — find the name first:
+
+```bash
+docker ps --format '{{.Names}}' | grep -i rtl
+```
+
+Wait briefly, then reload RTL.
 
 RTL is a useful control: it reads the same `admin.macaroon` from the same volume. If RTL
 reconnects successfully, it confirms that an internal consumer can authenticate using the
